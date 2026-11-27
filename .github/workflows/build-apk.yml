@@ -1,0 +1,46 @@
+name: Build SR Bangla Voice APK
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'SR-Bangla-Voice-Source.zip'
+      - '.github/workflows/build-apk.yml'
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract Android source
+        run: |
+          mkdir -p android-source
+          unzip -q SR-Bangla-Voice-Source.zip -d android-source
+          test -f android-source/settings.gradle
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Fetch pinned neural runtime and default voice
+        working-directory: android-source
+        run: |
+          mkdir -p app/libs app/src/main/assets/default
+          curl --fail --location --retry 3 https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.6/sherpa-onnx-1.13.6.aar -o app/libs/sherpa.aar
+          unzip -tq app/libs/sherpa.aar
+          for file in model.onnx tokens.txt; do
+            curl --fail --location --retry 3 "https://huggingface.co/demoqqq/banglatts-eleven-new/resolve/main/$file" -o "app/src/main/assets/default/$file"
+          done
+          test $(stat -c%s app/src/main/assets/default/model.onnx) -gt 1000000
+      - name: Build APK
+        working-directory: android-source
+        run: gradle --no-daemon :app:assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SR-Bangla-AI-Voice-Studio
+          path: android-source/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
