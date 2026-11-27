@@ -1,28 +1,65 @@
 name: Build SR Bangla Voice APK
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: "Stage all 38 model sources or build existing five-voice APK"
+        type: choice
+        options: [stage_all, build_five]
+        default: build_five
+      license_approval:
+        description: "All 38 redistribution licenses reviewed and approved"
+        type: boolean
+        default: false
   push:
     paths:
-      - 'SR-Bangla-Voice-Premium-Source.zip'
+      - 'SR-Bangla-Voice-38-Progress-Source.zip'
       - '.github/workflows/build-apk.yml'
 permissions:
   contents: read
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      MODE: ${{ inputs.mode || 'build_five' }}
     steps:
       - uses: actions/checkout@v4
       - name: Extract Android source
         run: |
-          unzip -tq SR-Bangla-Voice-Premium-Source.zip
+          unzip -tq SR-Bangla-Voice-38-Progress-Source.zip
           mkdir -p android-source
-          unzip -q SR-Bangla-Voice-Premium-Source.zip -d android-source
+          unzip -q SR-Bangla-Voice-38-Progress-Source.zip -d android-source
           test -f android-source/settings.gradle
+      - name: Stage 38 original model sources
+        if: env.MODE != 'build_five'
+        working-directory: android-source
+        env:
+          LICENSE_APPROVAL: ${{ inputs.license_approval }}
+        run: |
+          python -m venv .bundle-venv
+          .bundle-venv/bin/pip install 'huggingface_hub==0.34.4'
+          git lfs install --local
+          args=()
+          if [[ "$MODE" == embed_all ]]; then
+            args+=(--embed)
+            if [[ "$LICENSE_APPROVAL" == true ]]; then args+=(--license-approval); fi
+          fi
+          .bundle-venv/bin/python scripts/bundle_models.py "${args[@]}"
+      - name: Upload bundling report
+        if: always() && env.MODE != 'build_five'
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-bundling-report
+          path: android-source/model-staging/report.json
+          if-no-files-found: warn
       - uses: actions/setup-java@v4
+        if: env.MODE != 'stage_all'
         with:
           distribution: temurin
           java-version: '17'
       - name: Use preinstalled Android SDK
+        if: env.MODE != 'stage_all'
         shell: bash
         run: |
           SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
@@ -38,22 +75,52 @@ jobs:
           test -f "$SDK/platforms/android-35/android.jar"
           test -x "$SDK/build-tools/35.0.0/aapt2"
       - uses: gradle/actions/setup-gradle@v4
+        if: env.MODE != 'stage_all'
         with:
           gradle-version: '8.9'
-      - name: Fetch pinned neural runtime and default voice
+      - name: Fetch neural runtime and bundled voices
+        if: env.MODE != 'stage_all'
         working-directory: android-source
         run: |
-          mkdir -p app/libs app/src/main/assets/default
-          curl --fail --location --retry 3 https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.6/sherpa-onnx-1.13.6.aar -o app/libs/sherpa.aar
+          mkdir -p app/libs
+          curl -fL --retry 3 https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.6/sherpa-onnx-1.13.6.aar -o app/libs/sherpa.aar
           unzip -tq app/libs/sherpa.aar
-          for file in model.onnx tokens.txt; do
-            curl --fail --location --retry 3 "https://huggingface.co/demoqqq/banglatts-eleven-new/resolve/main/$file" -o "app/src/main/assets/default/$file"
+          fetch() {
+            local name="$1" repo="$2" model="$3" tokens="$4"
+            local dest="app/src/main/assets/bundled/$name"
+            mkdir -p "$dest"
+            curl -fL --retry 3 "https://huggingface.co/$repo/resolve/main/$model" -o "$dest/model.onnx"
+            curl -fL --retry 3 "https://huggingface.co/$repo/resolve/main/$tokens" -o "$dest/tokens.txt"
+            test $(stat -c%s "$dest/model.onnx") -gt 1000000
+            test -s "$dest/tokens.txt"
+          }
+          fetch 'Eleven-New' demoqqq/banglatts-eleven-new model.onnx tokens.txt
+          fetch 'Merged News' demoqqq/banglatts-merged-news model_fullmeta.onnx tokens_sherpa.txt
+          fetch 'SYSPIN Female' codebucketsolutions/bolo-syspin-bengali-female model.onnx tokens.txt
+          fetch 'SYSPIN Male' codebucketsolutions/bolo-syspin-bengali-male model.onnx tokens.txt
+          fetch 'Meta MMS Bengali' sriram09764/itantra-tts-onnx bn/model.onnx bn/tokens.txt
+          mkdir -p app/src/main/assets/licenses/mms
+          printf '%s\n' 'Meta MMS Bengali — CC BY-NC 4.0; non-commercial only.' 'https://huggingface.co/facebook/mms-tts-ben' 'Converted by sriram09764/itantra-tts-onnx' 'https://creativecommons.org/licenses/by-nc/4.0/' > app/src/main/assets/licenses/mms/ATTRIBUTION.txt
+          for sex in female male; do
+            dest="app/src/main/assets/licenses/syspin-$sex"
+            mkdir -p "$dest"
+            for f in LICENSE ATTRIBUTION; do
+              curl -fL --retry 3 "https://huggingface.co/codebucketsolutions/bolo-syspin-bengali-$sex/resolve/main/$f" -o "$dest/$f"
+            done
           done
-          test $(stat -c%s app/src/main/assets/default/model.onnx) -gt 1000000
+      - name: Host synthesis smoke test (all five voices)
+        if: env.MODE != 'stage_all'
+        working-directory: android-source
+        run: |
+          python -m venv .smoke-venv
+          .smoke-venv/bin/pip install sherpa-onnx==1.13.6
+          .smoke-venv/bin/python scripts/smoke_voices.py
       - name: Build APK
+        if: env.MODE != 'stage_all'
         working-directory: android-source
         run: gradle --no-daemon --stacktrace :app:assembleDebug
       - uses: actions/upload-artifact@v4
+        if: env.MODE != 'stage_all'
         with:
           name: SR-Bangla-AI-Voice-Studio
           path: android-source/app/build/outputs/apk/debug/*.apk
