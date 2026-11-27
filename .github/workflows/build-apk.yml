@@ -13,7 +13,7 @@ on:
         default: false
   push:
     paths:
-      - 'SR-Bangla-Voice-38-Progress-Source.zip'
+      - 'SR-Bangla-Voice-TokenFix-Source.zip'
       - '.github/workflows/build-apk.yml'
 permissions:
   contents: read
@@ -27,9 +27,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Extract Android source
         run: |
-          unzip -tq SR-Bangla-Voice-38-Progress-Source.zip
+          unzip -tq SR-Bangla-Voice-TokenFix-Source.zip
           mkdir -p android-source
-          unzip -q SR-Bangla-Voice-38-Progress-Source.zip -d android-source
+          unzip -q SR-Bangla-Voice-TokenFix-Source.zip -d android-source
           test -f android-source/settings.gradle
       - name: Stage 38 original model sources
         if: env.MODE != 'build_five'
@@ -108,6 +108,10 @@ jobs:
               curl -fL --retry 3 "https://huggingface.co/codebucketsolutions/bolo-syspin-bengali-$sex/resolve/main/$f" -o "$dest/$f"
             done
           done
+      - name: Normalize and validate character tokens
+        if: env.MODE != 'stage_all'
+        working-directory: android-source
+        run: python scripts/normalize_tokens.py
       - name: Host synthesis smoke test (all five voices)
         if: env.MODE != 'stage_all'
         working-directory: android-source
@@ -115,6 +119,15 @@ jobs:
           python -m venv .smoke-venv
           .smoke-venv/bin/pip install sherpa-onnx==1.13.6
           .smoke-venv/bin/python scripts/smoke_voices.py
+      - name: Upload voice validation reports
+        if: always() && env.MODE != 'stage_all'
+        uses: actions/upload-artifact@v4
+        with:
+          name: voice-validation-reports
+          path: |
+            android-source/token-report.json
+            android-source/voice-test-report.json
+          if-no-files-found: warn
       - name: Build APK
         if: env.MODE != 'stage_all'
         working-directory: android-source
