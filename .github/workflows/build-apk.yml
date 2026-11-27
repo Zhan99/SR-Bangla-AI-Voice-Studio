@@ -13,7 +13,7 @@ on:
         default: false
   push:
     paths:
-      - 'SR-Bangla-Voice-TokenFix-Source.zip'
+      - 'SR-Bangla-Voice-MMSFix-Source.zip'
       - '.github/workflows/build-apk.yml'
 permissions:
   contents: read
@@ -27,9 +27,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Extract Android source
         run: |
-          unzip -tq SR-Bangla-Voice-TokenFix-Source.zip
+          unzip -tq SR-Bangla-Voice-MMSFix-Source.zip
           mkdir -p android-source
-          unzip -q SR-Bangla-Voice-TokenFix-Source.zip -d android-source
+          unzip -q SR-Bangla-Voice-MMSFix-Source.zip -d android-source
           test -f android-source/settings.gradle
       - name: Stage 38 original model sources
         if: env.MODE != 'build_five'
@@ -98,9 +98,9 @@ jobs:
           fetch 'Merged News' demoqqq/banglatts-merged-news model_fullmeta.onnx tokens_sherpa.txt
           fetch 'SYSPIN Female' codebucketsolutions/bolo-syspin-bengali-female model.onnx tokens.txt
           fetch 'SYSPIN Male' codebucketsolutions/bolo-syspin-bengali-male model.onnx tokens.txt
-          fetch 'Meta MMS Bengali' sriram09764/itantra-tts-onnx bn/model.onnx bn/tokens.txt
+          fetch 'Meta MMS Bengali' willwade/mms-tts-multilingual-models-onnx ben/model.onnx ben/tokens.txt
           mkdir -p app/src/main/assets/licenses/mms
-          printf '%s\n' 'Meta MMS Bengali — CC BY-NC 4.0; non-commercial only.' 'https://huggingface.co/facebook/mms-tts-ben' 'Converted by sriram09764/itantra-tts-onnx' 'https://creativecommons.org/licenses/by-nc/4.0/' > app/src/main/assets/licenses/mms/ATTRIBUTION.txt
+          printf '%s\n' 'Meta MMS Bengali — CC BY-NC 4.0; non-commercial only.' 'https://huggingface.co/facebook/mms-tts-ben' 'Converted by willwade/mms-tts-multilingual-models-onnx' 'https://creativecommons.org/licenses/by-nc/4.0/' > app/src/main/assets/licenses/mms/ATTRIBUTION.txt
           for sex in female male; do
             dest="app/src/main/assets/licenses/syspin-$sex"
             mkdir -p "$dest"
@@ -112,12 +112,17 @@ jobs:
         if: env.MODE != 'stage_all'
         working-directory: android-source
         run: python scripts/normalize_tokens.py
+      - uses: actions/setup-python@v5
+        if: env.MODE != 'stage_all'
+        with:
+          python-version: '3.12'
       - name: Host synthesis smoke test (all five voices)
         if: env.MODE != 'stage_all'
         working-directory: android-source
         run: |
           python -m venv .smoke-venv
-          .smoke-venv/bin/pip install sherpa-onnx==1.13.6
+          .smoke-venv/bin/pip install sherpa-onnx==1.13.6 onnx==1.20.1
+          .smoke-venv/bin/python scripts/check_mms_graph.py
           .smoke-venv/bin/python scripts/smoke_voices.py
       - name: Upload voice validation reports
         if: always() && env.MODE != 'stage_all'
